@@ -22,6 +22,8 @@
   NSTimer* _updateTimer;
   BOOL _hasConnections;
   BOOL _needsUpdate;
+  NSString* password;  
+    
 #ifdef NSFoundationVersionNumber_iOS_4_0
   UIBackgroundTaskIdentifier _backgroundTask;
 #endif

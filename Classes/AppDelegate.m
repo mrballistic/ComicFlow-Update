@@ -192,10 +192,22 @@
 - (void) enableDAVServer {
   if (_davServer == nil) {
     NSString* documentsPath = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) lastObject];
+      
+    LOG_VERBOSE(@"pref is set to %@", [[NSUserDefaults standardUserDefaults] stringForKey:@"pw"]);  
+      
 #ifdef NDEBUG
-    NSString* password = [NSString stringWithFormat:@"%i", 100000 + random() % 899999];
+      if([[[NSUserDefaults standardUserDefaults] boolForKey:@"defaultPassword"]]){
+          password = [NSString stringWithFormat:[[NSUserDefaults standardUserDefaults] stringForKey:@"pw"]];
+      } else {
+          password = [NSString stringWithFormat:@"%i", 100000 + random() % 899999];
+      }
+    
 #else
-    NSString* password = nil;
+      if([[NSUserDefaults standardUserDefaults] boolForKey:@"defaultPassword"]){
+          password = [NSString stringWithFormat:[[NSUserDefaults standardUserDefaults] stringForKey:@"pw"]];
+      } else {
+          password = nil;
+      }
 #endif
     _davServer = [[DAVServer alloc] initWithRootDirectory:documentsPath port:8080 password:password];
     _davServer.delegate = self;

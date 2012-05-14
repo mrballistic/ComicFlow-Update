@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		053C052715617BFB00DB831A /* Settings.bundle in Resources */ = {isa = PBXBuildFile; fileRef = 053C052615617BFB00DB831A /* Settings.bundle */; };
 		1B236502154FABBA00A13B0D /* DocumentView-Shadow-Left@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1B2364F9154FABBA00A13B0D /* DocumentView-Shadow-Left@2x.png */; };
 		1B236503154FABBA00A13B0D /* DocumentView-Shadow-Right@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1B2364FA154FABBA00A13B0D /* DocumentView-Shadow-Right@2x.png */; };
 		1B236504154FABBA00A13B0D /* NavigationControl-Marker@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1B2364FB154FABBA00A13B0D /* NavigationControl-Marker@2x.png */; };
@@ -139,6 +140,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		053C052615617BFB00DB831A /* Settings.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = Settings.bundle; sourceTree = "<group>"; };
 		1B2364F9154FABBA00A13B0D /* DocumentView-Shadow-Left@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "DocumentView-Shadow-Left@2x.png"; sourceTree = "<group>"; };
 		1B2364FA154FABBA00A13B0D /* DocumentView-Shadow-Right@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "DocumentView-Shadow-Right@2x.png"; sourceTree = "<group>"; };
 		1B2364FB154FABBA00A13B0D /* NavigationControl-Marker@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "NavigationControl-Marker@2x.png"; sourceTree = "<group>"; };
@@ -398,6 +400,7 @@
 				E266110415320E700045E707 /* New@2x.png */,
 				E266110515320E700045E707 /* Ribbon@2x.png */,
 				E28CF6DF1223A0BC0076FB21 /* Ribbon.png */,
+				053C052615617BFB00DB831A /* Settings.bundle */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -628,6 +631,7 @@
 				1B236508154FABBA00A13B0D /* OverlayView-Arrow-Right@2x.png in Resources */,
 				1B236509154FABBA00A13B0D /* OverlayView-Arrow-Top@2x.png in Resources */,
 				1B23650A154FABBA00A13B0D /* OverlayView-Contents@2x.png in Resources */,
+				053C052715617BFB00DB831A /* Settings.bundle in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
