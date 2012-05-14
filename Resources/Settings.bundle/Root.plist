@@ -27,6 +27,8 @@
 			<string>Password</string>
 			<key>Key</key>
 			<string>pw</string>
+			<key>IsSecure</key>
+			<true/>
 		</dict>
 	</array>
 	<key>StringsTable</key>

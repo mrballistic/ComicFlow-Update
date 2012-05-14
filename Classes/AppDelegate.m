@@ -193,18 +193,20 @@
   if (_davServer == nil) {
     NSString* documentsPath = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) lastObject];
       
-    LOG_VERBOSE(@"pref is set to %@", [[NSUserDefaults standardUserDefaults] stringForKey:@"pw"]);  
+    //LOG_VERBOSE(@"pref is set to %@", [[NSUserDefaults standardUserDefaults] stringForKey:@"pw"]);  
+      
+    NSString* userPassword = [[[NSUserDefaults standardUserDefaults] stringForKey:@"pw"] copy];
       
 #ifdef NDEBUG
-      if([[[NSUserDefaults standardUserDefaults] boolForKey:@"defaultPassword"]]){
-          password = [NSString stringWithFormat:[[NSUserDefaults standardUserDefaults] stringForKey:@"pw"]];
+      if([[NSUserDefaults standardUserDefaults] boolForKey:@"defaultPassword"]){
+          password = userPassword;
       } else {
           password = [NSString stringWithFormat:@"%i", 100000 + random() % 899999];
       }
     
 #else
       if([[NSUserDefaults standardUserDefaults] boolForKey:@"defaultPassword"]){
-          password = [NSString stringWithFormat:[[NSUserDefaults standardUserDefaults] stringForKey:@"pw"]];
+          password = userPassword;
       } else {
           password = nil;
       }
