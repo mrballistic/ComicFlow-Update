@@ -30,6 +30,7 @@
 "MARK_NEW" = "Mark New";
 "MARK_ALL_READ" = "Mark All Read";
 "MARK_ALL_NEW" = "Mark All New";
+"DELETE_COMICS" = "Delete Comics";
 
 "LABEL_FORMAT" = "Page %i of %i";
 

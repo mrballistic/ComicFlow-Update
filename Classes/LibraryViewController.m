@@ -33,10 +33,10 @@
 #define kItemHorizontalSpacing_Portrait 17.0
 #define kItemHorizontalSpacing_Landscape 9.0
 
-#define kNewImageX 0.0
-#define kNewImageY 0.0
-#define kNewImageWidth 65.0
-#define kNewImageHeight 65.0
+#define kNewImageX -1.0
+#define kNewImageY -10.0
+#define kNewImageWidth 144.0
+#define kNewImageHeight 196.0
 
 #define kRibbonImageX 58.0
 #define kRibbonImageY 0.0
@@ -187,7 +187,7 @@ static void __DisplayQueueCallBack(void* info) {
 - (void) awakeFromNib {
   _collectionImage = [[UIImage alloc] initWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"Collection" ofType:@"png"]];
   CHECK(_collectionImage);
-  _newImage = [[UIImage alloc] initWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"New" ofType:@"png"]];
+  _newImage = [[UIImage alloc] initWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"polyBag" ofType:@"png"]];
   CHECK(_newImage);
   _ribbonImage = [[UIImage alloc] initWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"Ribbon" ofType:@"png"]];
   CHECK(_ribbonImage);
@@ -370,6 +370,9 @@ static void __DisplayQueueCallBack(void* info) {
   
   UIViewController* viewController = [[UIViewController alloc] init];
   viewController.view = _menuView;
+    
+// popover controller added here    
+    
   _menuController = [[UIPopoverController alloc] initWithContentViewController:viewController];
   _menuController.popoverContentSize = _menuView.frame.size;
   [viewController release];
