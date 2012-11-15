@@ -18,14 +18,15 @@
 
 @protocol DocumentViewDelegate <NSObject>
 @optional
-- (void) documentViewWillBeginSwiping:(DocumentView*)infiniteView;
-- (void) documentViewDidEndSwiping:(DocumentView*)infiniteView;
+- (void) documentViewWillBeginSwiping:(DocumentView*)documentView;
+- (void) documentViewDidEndSwiping:(DocumentView*)documentView;
 - (void) documentViewWillChangePage:(DocumentView*)documentView;
 - (void) documentViewDidChangePage:(DocumentView*)documentView;
 - (void) documentView:(DocumentView*)documentView willShowPageView:(UIView*)view;
 - (void) documentView:(DocumentView*)documentView didHidePageView:(UIView*)view;
 - (void) documentViewDidReachFirstPage:(DocumentView*)documentView;  // Called when the user tries to go before first page
 - (void) documentViewDidReachLastPage:(DocumentView*)documentView;  // Called when the user tries to go past last page
+- (void) documentViewDidDisplayCurrentPage:(DocumentView*)documentView animated:(BOOL)animated;  // Called potentially after -documentViewDidChangePage in case of animations
 @end
 
 @interface DocumentView : UIView <UIGestureRecognizerDelegate> {
@@ -36,6 +37,7 @@
   BOOL _swipingEnabled;
   NSTimeInterval _animationDuration;
   BOOL _showSelectedOnly;
+  CGFloat _pageMargin;
   
   UIView* _contentView;
   UIView* _leftShadowView;
@@ -44,6 +46,8 @@
   NSUInteger _pageIndex;
   CGSize _pageSize;
   BOOL _swiping;
+  CGPoint _startPosition;
+  UIPanGestureRecognizer* _panRecognizer;
 }
 @property(nonatomic, assign) id<DocumentViewDelegate> delegate;
 @property(nonatomic) BOOL hideInvisiblePageViews;  // Use "hidden" view property instead of adding / removing views dynamically - Default is YES
@@ -53,6 +57,7 @@
 @property(nonatomic, getter=isSwipingEnabled) BOOL swipingEnabled;  // Default is YES
 @property(nonatomic) NSTimeInterval animationDuration;  // Default is 0.5
 @property(nonatomic) BOOL showsOnlySelectedPage;  // Default is NO
+@property(nonatomic) CGFloat pageMargin;  // Default is 0.0
 - (void) setPageViews:(NSArray*)views initialPageIndex:(NSUInteger)index;
 - (void) setSelectedPageIndex:(NSUInteger)index animate:(BOOL)animate;
 - (void) setSelectedPageView:(UIView*)view animate:(BOOL)animate;
@@ -61,6 +66,7 @@
 - (void) cancelAnimations;
 
 // For additional gesture recognizers
+@property(nonatomic, readonly) UIPanGestureRecognizer* panGestureRecognizer;
 - (void) panAction:(UIPanGestureRecognizer*)recognizer;
 @end
 
@@ -69,4 +75,5 @@
 - (void) setPageView:(UIView*)view visible:(BOOL)visible;
 - (void) willChangePageIndex;
 - (void) didChangePageIndex;
+- (void) didDisplayCurrentPage:(BOOL)animated;
 @end

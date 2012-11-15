@@ -25,11 +25,7 @@
 #endif
 
 #define kApplicationLoggingHistoryFile @"Logging.db"
-#ifdef NDEBUG
 #define kApplicationLoggingHistoryAge (7.0 * 24.0 * 60.0 * 60.0) // 7 days
-#else
-#define kApplicationLoggingHistoryAge (60.0 * 60.0)  // 1 hour
-#endif
 #define kApplicationRemoteLoggingPort 2323
 
 typedef NSUInteger ApplicationMessageIdentifier;
@@ -66,8 +62,10 @@ typedef NSUInteger ApplicationMessageIdentifier;
   DAVServer* _webdavServer;
 #endif
   BOOL _loggingServer;
+#if __TASK_SUPPORT__
 #ifdef NSFoundationVersionNumber_iOS_4_0
   UIBackgroundTaskIdentifier _queueTask;
+#endif
 #endif
   
   UITextView* _loggingOverlayView;
@@ -76,7 +74,8 @@ typedef NSUInteger ApplicationMessageIdentifier;
 @property(nonatomic, retain) IBOutlet UIWindow* window;
 @property(nonatomic, retain) IBOutlet UIViewController* viewController;
 + (id) sharedInstance;
-+ (void) setOverlaysOpacity:(CGFloat)opacity;  // Default is 0.75
++ (UIWindowLevel) overlaysWindowLevel;  // Default is 100.0
++ (CGFloat) overlaysOpacity;  // Default is 0.75
 + (BOOL) checkCompatibilityWithMinimumOSVersion:(NSString*)minOSVersion minimumApplicationVersion:(NSString*)minAppVersion;  // Pass nil to skip check
 - (void) showLogViewControllerWithTitle:(NSString*)title;  // Displayed modally on the view controller
 - (BOOL) sendErrorsToEmail:(NSString*)email withSubject:(NSString*)subject bodyPrefix:(NSString*)prefix;
@@ -85,12 +84,16 @@ typedef NSUInteger ApplicationMessageIdentifier;
 - (BOOL) shouldRotateOverlayWindowToInterfaceOrientation:(UIInterfaceOrientation)orientation;  // Default implementation returns YES
 @end
 
+#if __TASK_SUPPORT__
+
 @interface ApplicationDelegate (Configuration)
 + (NSURL*) configurationSourceURL;  // Returns nil if configuration is default
 + (id) objectForConfigurationKey:(NSString*)key;  // Returned object is guaranteed not to be nil
 + (void) updateConfigurationInBackgroundWithDelegate:(id)delegate;  // -configurationDidUpdate:(NSURL*)sourceURL
 + (BOOL) isUpdatingConfiguration;
 @end
+
+#endif
 
 // If alert is dismissed, cancel selector is called on delegate
 // Any existing alert or authentication is automatically dismissed when new one is shown

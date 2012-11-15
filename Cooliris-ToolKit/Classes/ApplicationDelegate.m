@@ -16,7 +16,9 @@
 #import <objc/runtime.h>
 
 #import "ApplicationDelegate.h"
+#if __TASK_SUPPORT__
 #import "Task.h"
+#endif
 #import "HTTPURLConnection.h"
 #import "Logging.h"
 #import "Extensions_Foundation.h"
@@ -33,8 +35,11 @@
 #define kMessageMaxDimension 700.0
 
 #define kSpinnerBorderWidth 15.0
-#define kSpinnerSpacing 6.0
+#define kSpinnerSpacing 10.0
+#define kSpinnerFullscreenSpacing 18.0
 #define kSpinnerViewAnimationDuration 0.5
+#define kSpinnerFontSize 14.0
+#define kSpinnerFullscreenFontSize 17.0
 
 #define kTagFlag_New (1 << 0)
 #define kTagFlag_Transient (1 << 1)
@@ -68,6 +73,8 @@
 @interface LogViewController : UIViewController
 @end
 
+#if __TASK_SUPPORT__
+
 @interface ConfigurationDownloader : Task {
 @private
   NSArray* _urls;
@@ -79,23 +86,77 @@
 - (id) initWithURLs:(NSArray*)urls;
 @end
 
+#endif
+
 @interface ApplicationDelegate (Internal)
 - (void) _dismissAlertWithButtonIndex:(NSInteger)index;
 - (void) _dismissAuthenticationWithButtonIndex:(NSInteger)index;
+- (void) _loggedMessage:(NSString*)message;
 @end
 
 static ApplicationDelegate* _sharedInstance = nil;
 static IMP _exceptionInitializerIMP = NULL;
 static NSMutableDictionary* _configurationDictionary = nil;
+#if __TASK_SUPPORT__
 static Task* _configurationTask = nil;
-static CGFloat _overlaysOpacity = 0.75;
+#endif
 
-static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reason, NSDictionary* userInfo) {
+static id _ExceptionInitializer(id self, SEL cmd, NSString* name, NSString* reason, NSDictionary* userInfo) {
   if ((self = _exceptionInitializerIMP(self, cmd, name, reason, userInfo))) {
     LOG_EXCEPTION(self);
   }
   return self;
 }
+
+static void _ResetDefaultLoggingLevel() {
+#ifdef NDEBUG
+  if ([[NSProcessInfo processInfo] isDebuggerAttached]) {
+    LoggingSetMinimumLevel(kLogLevel_Verbose);
+    LOG_WARNING(@"Debugger is attached");
+  } else {
+    LoggingSetMinimumLevel(kLogLevel_Warning);
+  }
+#else
+  LoggingResetMinimumLevel();
+#endif
+}
+
+static void _SetVerboseLoggingLevel() {
+  LoggingSetMinimumLevel(kLogLevel_Verbose);
+}
+
+static NSString* _LoggingRemoteConnectCallback(void* context) {
+  _SetVerboseLoggingLevel();
+  return nil;
+}
+
+static SEL _ParseCommandString(NSString* string, NSString** command, NSString** argument) {
+  NSScanner* scanner = [NSScanner scannerWithString:string];
+  [scanner setCharactersToBeSkipped:nil];
+  [scanner scanUpToCharactersFromSet:[NSCharacterSet whitespaceCharacterSet] intoString:command];
+  [scanner scanCharactersFromSet:[NSCharacterSet whitespaceCharacterSet] intoString:NULL];
+  if (![scanner isAtEnd]) {
+    *argument = [string substringFromIndex:scanner.scanLocation];
+  }
+  return NSSelectorFromString([NSString stringWithFormat:@"command_%@:", *command]);
+}
+
+static NSString* _LoggingRemoteMessageCallback(NSString* message, void* context) {
+  ApplicationDelegate* self = (ApplicationDelegate*)context;
+  NSString* command = nil;
+  NSString* argument = nil;
+  SEL selector = _ParseCommandString(message, &command, &argument);
+  if ([self respondsToSelector:selector]) {
+    return [self performSelector:selector withObject:argument];
+  }
+  return [NSString stringWithFormat:@"INVALID COMMAND: '%@'", message];
+}
+
+static void _LoggingRemoteDisconnectCallback(void* context) {
+  _ResetDefaultLoggingLevel();
+}
+
+#if __TASK_SUPPORT__
 
 @implementation ConfigurationDownloader
 
@@ -145,6 +206,8 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
 
 @end
 
+#endif
+
 @implementation LogViewController
 
 - (BOOL) shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation {
@@ -181,17 +244,17 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
         self.transform = CGAffineTransformMakeRotation(M_PI * 1.5);
       }
       
-      if ((UIDeviceOrientationIsPortrait(_lastDeviceOrientation) && UIDeviceOrientationIsLandscape(orientation))
-          || (UIDeviceOrientationIsLandscape(_lastDeviceOrientation) && UIDeviceOrientationIsPortrait(orientation))) {
-        CGRect bounds = self.bounds;
+      CGRect bounds = self.screen.bounds;
+      if (UIDeviceOrientationIsLandscape(orientation)) {
         bounds.size = CGSizeMake(bounds.size.height, bounds.size.width);
-        self.bounds = bounds;
-      } else if ((UIDeviceOrientationIsLandscape(_lastDeviceOrientation) && UIDeviceOrientationIsLandscape(orientation))
-                 || (UIDeviceOrientationIsPortrait(_lastDeviceOrientation) && UIDeviceOrientationIsPortrait(orientation))) {
-        [UIView setAnimationDuration:(2.0 * kDeviceRotationAnimationDuration)];
       }
+      self.bounds = bounds;
       
       if (shouldAnimate) {
+        if ((UIDeviceOrientationIsLandscape(_lastDeviceOrientation) && UIDeviceOrientationIsLandscape(orientation))
+            || (UIDeviceOrientationIsPortrait(_lastDeviceOrientation) && UIDeviceOrientationIsPortrait(orientation))) {
+          [UIView setAnimationDuration:(2.0 * kDeviceRotationAnimationDuration)];
+        }
         [UIView commitAnimations];
       }
     }
@@ -204,7 +267,6 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
     _lastDeviceOrientation = UIDeviceOrientationUnknown;
     
     self.userInteractionEnabled = NO;
-    self.windowLevel = 100.0;  // UIWindowLevelNormal = 0.0 & UIWindowLevelStatusBar = 1000.0
     self.screen = screen;
     
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -253,8 +315,12 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
   return _sharedInstance;
 }
 
-+ (void) setOverlaysOpacity:(CGFloat)opacity {
-  _overlaysOpacity = opacity;
++ (UIWindowLevel) overlaysWindowLevel {
+  return 100.0;
+}
+
++ (CGFloat) overlaysOpacity {
+  return 0.75;
 }
 
 + (BOOL) checkCompatibilityWithMinimumOSVersion:(NSString*)minOSVersion minimumApplicationVersion:(NSString*)minAppVersion {
@@ -284,66 +350,68 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
 
 - (void) _startServices {
   // Setup logging remote access
-  if ([[NSUserDefaults standardUserDefaults] boolForKey:kApplicationUserDefaultKey_LoggingServerEnabled]) {
+  NSInteger loggingServerEnabled = [[NSUserDefaults standardUserDefaults] integerForKey:kApplicationUserDefaultKey_LoggingServerEnabled];
+  if (loggingServerEnabled != 0) {
     NSString* ipAddress = [[UIDevice currentDevice] currentWiFiAddress];
     if (ipAddress) {
       _loggingServer = YES;
     }
-    if (_loggingServer && LoggingEnableRemoteAccess(kApplicationRemoteLoggingPort)) {
-      LoggingSetMinimumLevel(kLogLevel_Verbose);
-      NSString* string = [NSString stringWithFormat:@"Remote Logging @ %@:%i", ipAddress, kApplicationRemoteLoggingPort];
-      [self showMessageWithString:string
-                            delay:kRemoteLoggingMessageDelay
-                         duration:kRemoteLoggingMessageDuration
-                         animated:YES];
+    if (_loggingServer && LoggingEnableRemoteAccess(kApplicationRemoteLoggingPort, _LoggingRemoteConnectCallback, _LoggingRemoteMessageCallback, _LoggingRemoteDisconnectCallback, self)) {
+      if (loggingServerEnabled > 0) {
+        [self showMessageWithString:[NSString stringWithFormat:@"Remote Logging @ %@:%i", ipAddress, kApplicationRemoteLoggingPort]
+                              delay:kRemoteLoggingMessageDelay
+                           duration:kRemoteLoggingMessageDuration
+                           animated:YES];
+      }
     } else {
-      [self showMessageWithString:@"Remote Logging Not Available"
-                            delay:kRemoteLoggingMessageDelay
-                         duration:kRemoteLoggingMessageDuration
-                         animated:YES];
+      if (loggingServerEnabled > 0) {
+        [self showMessageWithString:@"Remote Logging Not Available"
+                              delay:kRemoteLoggingMessageDelay
+                           duration:kRemoteLoggingMessageDuration
+                           animated:YES];
+      }
     }
   }
   
 #if __DAVSERVER_SUPPORT__
   // Start WebDAV server if necessary
-  if ([[NSUserDefaults standardUserDefaults] boolForKey:kApplicationUserDefaultKey_WebDAVServerEnabled]) {
+  NSInteger webdavServerEnabled = [[NSUserDefaults standardUserDefaults] integerForKey:kApplicationUserDefaultKey_WebDAVServerEnabled];
+  if (webdavServerEnabled != 0) {
     NSString* ipAddress = [[UIDevice currentDevice] currentWiFiAddress];
     if (ipAddress) {
       NSString* documentsPath = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) lastObject];
       _webdavServer = [[DAVServer alloc] initWithRootDirectory:[documentsPath stringByDeletingLastPathComponent]];
     }
     if ([_webdavServer start]) {
-      NSString* string = [NSString stringWithFormat:@"WebDAV Server @ %@:%i", ipAddress, _webdavServer.port];
-      [self showMessageWithString:string
-                            delay:kWebDAVServerMessageDelay
-                         duration:kWebDAVServerMessageDuration
-                         animated:YES];
+      if (webdavServerEnabled > 0) {
+        [self showMessageWithString:[NSString stringWithFormat:@"WebDAV Server @ %@:%i", ipAddress, _webdavServer.port]
+                              delay:kWebDAVServerMessageDelay
+                           duration:kWebDAVServerMessageDuration
+                           animated:YES];
+      }
     } else {
-      [self showMessageWithString:@"WebDAV Server Not Available"
-                            delay:kWebDAVServerMessageDelay
-                         duration:kWebDAVServerMessageDuration
-                         animated:YES];
+      if (webdavServerEnabled > 0) {
+        [self showMessageWithString:@"WebDAV Server Not Available"
+                              delay:kWebDAVServerMessageDelay
+                           duration:kWebDAVServerMessageDuration
+                           animated:YES];
+      }
     }
   }
 #endif
 }
 
 - (BOOL) application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
+#if __TASK_SUPPORT__
 #ifdef NSFoundationVersionNumber_iOS_4_0
   if (&UIBackgroundTaskInvalid != NULL) {
     _queueTask = UIBackgroundTaskInvalid;
   }
 #endif
-  
-#ifdef NDEBUG
-  // Setup minimum logging level
-  if ([[NSProcessInfo processInfo] isDebuggerAttached]) {
-    LoggingSetMinimumLevel(kLogLevel_Verbose);
-    LOG_WARNING(@"Debugger is attached: verbose logging active");
-  } else {
-    LoggingSetMinimumLevel(kLogLevel_Warning);
-  }
 #endif
+  
+  // Setup minimum logging level
+  _ResetDefaultLoggingLevel();
   
   // Setup logging history
   NSString* cachesPath = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) lastObject];
@@ -353,16 +421,19 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
   // We cannot patch @throw but we can patch the designated initializer of NSException
   _exceptionInitializerIMP = method_setImplementation(class_getInstanceMethod([NSException class],
                                                                               @selector(initWithName:reason:userInfo:)),
-                                                      (IMP)&_exceptionInitializer);
+                                                      (IMP)&_ExceptionInitializer);
   
   // Initialize overlay window
   _overlayWindow = [[ApplicationWindow alloc] initWithScreen:[UIScreen mainScreen]];
+  _overlayWindow.windowLevel = [[self class] overlaysWindowLevel];
   
   // Defer services start
   [self performSelector:@selector(_startServices) withObject:nil afterDelay:0.0];
   
   return NO;
 }
+
+#if __TASK_SUPPORT__
 
 - (void) _shutdownTaskQueue {
   LOG_VERBOSE(@"Waiting for TaskQueue to shutdown...");
@@ -396,6 +467,10 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
   }
 }
 
+#endif
+
+#endif
+
 - (void) applicationDidEnterBackground:(UIApplication*)application {
   // Dismiss alert views
   [self dismissAuthentication:NO];
@@ -414,6 +489,7 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
   // Purge history
   LoggingPurgeHistory(kApplicationLoggingHistoryAge);
   
+#if __TASK_SUPPORT__
   // Start TaskQueue background task if necessary - TODO: There can be race conditions if tasks aren't scheduled from main thread
   if ([TaskQueue wasCreated]) {
     if ([[TaskQueue sharedTaskQueue] isIdle] && ![[TaskQueue sharedTaskQueue] numberOfQueuedTasks]) {
@@ -434,7 +510,9 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
     }
   }
   // Otherwise, save state immediately
-  else {
+  else
+#endif
+  {
     [self saveState];
   }
   
@@ -450,6 +528,7 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
   // Make sure user defaults are synchronized
   [[NSUserDefaults standardUserDefaults] synchronize];
   
+#if __TASK_SUPPORT__
   // Finish TaskQueue background task
   if (_queueTask != UIBackgroundTaskInvalid) {
     [[TaskQueue sharedTaskQueue] suspend];
@@ -460,10 +539,11 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
   if ([TaskQueue wasCreated] && [[TaskQueue sharedTaskQueue] isSuspended]) {
     [[TaskQueue sharedTaskQueue] resume];
   }
+#endif
   
   // Restart logging remote access
   if (_loggingServer) {
-    LoggingEnableRemoteAccess(kApplicationRemoteLoggingPort);
+    LoggingEnableRemoteAccess(kApplicationRemoteLoggingPort, _LoggingRemoteConnectCallback, _LoggingRemoteMessageCallback, _LoggingRemoteDisconnectCallback, self);
   }
   
 #if __DAVSERVER_SUPPORT__
@@ -472,17 +552,17 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
 #endif
 }
 
-#endif
-
 - (void) applicationWillTerminate:(UIApplication*)application {
   // Dismiss alert views
   [self dismissAuthentication:NO];
   [self dismissAlert:NO];
   
+#if __TASK_SUPPORT__
   // Shutdown TaskQueue
   if ([TaskQueue wasCreated]) {
     [self _shutdownTaskQueue];
   }
+#endif
   
   // Save state
   [self saveState];
@@ -504,8 +584,19 @@ static id _exceptionInitializer(id self, SEL cmd, NSString* name, NSString* reas
   [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
+- (UIViewController*) _findTopViewController:(BOOL)skipLastModal {
+  UIViewController* controller = _window.rootViewController;
+  if (controller == nil) {
+    controller = _viewController;
+  }
+  while (controller.modalViewController && (!skipLastModal || controller.modalViewController.modalViewController)) {
+    controller = controller.modalViewController;
+  }
+  return controller;
+}
+
 - (void) _logViewControllerDone:(id)sender {
-  [_viewController dismissModalViewControllerAnimated:YES];
+  [[self _findTopViewController:YES] dismissModalViewControllerAnimated:YES];
 }
 
 static void _HistoryLogCallback(NSUInteger appVersion, NSTimeInterval timestamp, LogLevel level, NSString* message, void* context) {
@@ -516,7 +607,7 @@ static void _HistoryLogCallback(NSUInteger appVersion, NSTimeInterval timestamp,
 
 - (void) showLogViewControllerWithTitle:(NSString*)title {
   NSMutableString* log = [NSMutableString string];
-  LoggingReplayHistory(_HistoryLogCallback, log, YES);
+  LoggingReplayHistory(_HistoryLogCallback, log, YES, 0);
   
   UITextView* view = [[UITextView alloc] init];
   view.text = log;
@@ -532,7 +623,7 @@ static void _HistoryLogCallback(NSUInteger appVersion, NSTimeInterval timestamp,
                                                                                                     target:self
                                                                                                     action:@selector(_logViewControllerDone:)] autorelease];
   UINavigationController* navigationController = [[UINavigationController alloc] initWithRootViewController:viewController];
-  [_viewController presentModalViewController:navigationController animated:YES];
+  [[self _findTopViewController:NO] presentModalViewController:navigationController animated:YES];
   [navigationController release];
   [viewController release];
   
@@ -542,7 +633,7 @@ static void _HistoryLogCallback(NSUInteger appVersion, NSTimeInterval timestamp,
 - (void) mailComposeController:(MFMailComposeViewController*)controller
            didFinishWithResult:(MFMailComposeResult)result
                          error:(NSError*)error {
-  [_viewController dismissModalViewControllerAnimated:YES];
+  [[self _findTopViewController:YES] dismissModalViewControllerAnimated:YES];
 }
 
 static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timestamp, LogLevel level, NSString* message, void* context) {
@@ -559,7 +650,7 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
   }
   
   NSMutableString* log = [NSMutableString string];
-  LoggingReplayHistory(_HistoryErrorsCallback, log, YES);
+  LoggingReplayHistory(_HistoryErrorsCallback, log, YES, 0);
   
   MFMailComposeViewController* controller = [[NSClassFromString(@"MFMailComposeViewController") alloc] init];
   controller.mailComposeDelegate = (id<MFMailComposeViewControllerDelegate>)self;
@@ -567,20 +658,15 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
   [controller setToRecipients:[NSArray arrayWithObject:email]];
   [controller setMessageBody:[NSString stringWithFormat:@"%@%@", prefix, log]
                       isHTML:NO];
-  [_viewController presentModalViewController:controller animated:YES];
+  [[self _findTopViewController:NO] presentModalViewController:controller animated:YES];
   [controller release];
   return YES;
 }
 
 - (BOOL) processCommandString:(NSString*)string {
-  NSScanner* scanner = [NSScanner scannerWithString:string];
-  [scanner setCharactersToBeSkipped:nil];
   NSString* command = nil;
-  [scanner scanUpToCharactersFromSet:[NSCharacterSet whitespaceCharacterSet] intoString:&command];
-  [scanner scanCharactersFromSet:[NSCharacterSet whitespaceCharacterSet] intoString:NULL];
   NSString* argument = nil;
-  [scanner scanUpToCharactersFromSet:[NSCharacterSet whitespaceCharacterSet] intoString:&argument];
-  SEL selector = NSSelectorFromString([NSString stringWithFormat:@"command_%@:", command]);
+  SEL selector = _ParseCommandString(string, &command, &argument);
   if ([self respondsToSelector:selector]) {
     NSString* string = [self performSelector:selector withObject:argument];
     if (string) {
@@ -602,6 +688,8 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
 }
 
 @end
+
+#if __TASK_SUPPORT__
 
 @implementation ApplicationDelegate (Configuration)
 
@@ -681,6 +769,8 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
 }
 
 @end
+
+#endif
 
 @implementation ApplicationDelegate (Alerts)
 
@@ -939,7 +1029,7 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
   UIView* messageView = [[UIView alloc] initWithFrame:CGRectInset(view.bounds, -kMessageBorderWidth, -kMessageBorderWidth)];
   messageView.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin |
                                  UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
-  messageView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:_overlaysOpacity];
+  messageView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:[[self class] overlaysOpacity]];
   messageView.layer.cornerRadius = 10.0;
   messageView.tag = kTagFlag_New;
   if (animated) {
@@ -1038,7 +1128,7 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
     label = [[UILabel alloc] init];
     label.backgroundColor = nil;
     label.opaque = NO;
-    label.font = [UIFont boldSystemFontOfSize:22.0];
+    label.font = [UIFont boldSystemFontOfSize:(fullScreen ? kSpinnerFullscreenFontSize : kSpinnerFontSize)];
     label.textColor = [UIColor whiteColor];
     label.textAlignment = UITextAlignmentCenter;
     label.numberOfLines = 0;
@@ -1047,10 +1137,10 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
     [label autorelease];
     CGRect rect = label.frame;
     rect.origin.x = kSpinnerBorderWidth;
-    rect.origin.y = frame.size.height - kSpinnerBorderWidth + kSpinnerSpacing;
+    rect.origin.y = frame.size.height - kSpinnerBorderWidth + (fullScreen ? kSpinnerFullscreenSpacing : kSpinnerSpacing);
     label.frame = rect;
     frame.size.width += rect.size.width - size.width;
-    frame.size.height += rect.size.height + kSpinnerSpacing;
+    frame.size.height += rect.size.height + (fullScreen ? kSpinnerFullscreenSpacing : kSpinnerSpacing);
     CGRect temp = indicator.frame;
     temp.origin.x = roundf(temp.origin.x - temp.size.width / 2.0 + rect.size.width / 2.0);
     indicator.frame = temp;
@@ -1075,7 +1165,7 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
     _spinnerView = spinnerView;
     _spinnerView.layer.cornerRadius = 10.0;
   }
-  _spinnerView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:_overlaysOpacity];
+  _spinnerView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:[[self class] overlaysOpacity]];
   [_overlayWindow presentView:_spinnerView];
   if (animated) {
     _spinnerView.alpha = 0.0;
@@ -1191,10 +1281,11 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
 }
 
 - (NSString*) command_showLog:(id)argument {
-  DCHECK(_viewController);
   [self showLogViewControllerWithTitle:@"Log Contents"];
   return nil;
 }
+
+#if __TASK_SUPPORT__
 
 - (NSString*) command_reportErrors:(id)argument {
   NSString* email = [ApplicationDelegate objectForConfigurationKey:kApplicationConfigurationKey_ReportEmail];
@@ -1207,6 +1298,8 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
   return success ? nil : @"Device is not configured to send email";
 }
 
+#endif
+
 - (NSString*) command_enableOverlayLogging:(id)argument {
   [self setLoggingOverlayEnabled:YES];
   return @"Logging overlay is enabled";
@@ -1218,13 +1311,17 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
 }
 
 - (NSString*) command_enableVerboseLogging:(id)argument {
-  LoggingSetMinimumLevel(kLogLevel_Verbose);
+  _SetVerboseLoggingLevel();
   return @"Verbose logging is enabled";
 }
 
 - (NSString*) command_disableVerboseLogging:(id)argument {
-  LoggingSetMinimumLevel(kLogLevel_Warning);
+  _ResetDefaultLoggingLevel();
   return @"Verbose logging is disabled";
+}
+
+- (NSString*) command_showUserDefaults:(id)argument {
+  return [[[NSUserDefaults standardUserDefaults] dictionaryRepresentation] description];
 }
 
 @end
@@ -1234,9 +1331,15 @@ static void _HistoryErrorsCallback(NSUInteger appVersion, NSTimeInterval timesta
 // Called from arbitrary threads
 static void _LoggingCallback(NSTimeInterval timestamp, LogLevel level, NSString* message, void* context) {
   message = [NSString stringWithFormat:@"[%s] %@\n", LoggingGetLevelName(level), message];
+#if __TASK_SUPPORT__
   [[TaskQueue sharedTaskQueue] performSelectorOnMainThread:@selector(_loggedMessage:)
                                               withArgument:message
                                                usingTarget:[ApplicationDelegate sharedInstance]];
+#else
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [[ApplicationDelegate sharedInstance] _loggedMessage:message];
+  });
+#endif
 }
 
 - (void) _showLoggingOverlay {
@@ -1280,12 +1383,14 @@ static void _LoggingCallback(NSTimeInterval timestamp, LogLevel level, NSString*
 
 - (void) setLoggingOverlayEnabled:(BOOL)flag {
   if (flag && !_loggingOverlayView) {
+#if __TASK_SUPPORT__
     [TaskQueue sharedTaskQueue]; // Make sure TaskQueue exists
+#endif
     
     _loggingOverlayView = [[UITextView alloc] init];
     _loggingOverlayView.layer.cornerRadius = 6.0;
     _loggingOverlayView.opaque = NO;
-    _loggingOverlayView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:_overlaysOpacity];
+    _loggingOverlayView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:[[self class] overlaysOpacity]];
     _loggingOverlayView.textColor = [UIColor whiteColor];
     _loggingOverlayView.font = [UIFont fontWithName:kLoggingFontName size:kLoggingFontSize];
     _loggingOverlayView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;

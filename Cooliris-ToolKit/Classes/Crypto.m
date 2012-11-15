@@ -64,6 +64,21 @@ NSString* HashToString(const unsigned char* hash, NSUInteger size) {
   return [NSString stringWithUTF8String:buffer];
 }
 
+NSData* DataFromString(NSString* string) {
+  if ((string != nil) && (string.length % 2 == 0)) {
+    NSMutableData* data = [NSMutableData dataWithLength:(string.length / 2)];
+    return HashFromString(string, data.mutableBytes, data.length) ? data : nil;
+  }
+  return nil;
+}
+
+NSString* DataToString(NSData* data) {
+  if (data) {
+    return HashToString(data.bytes, data.length);
+  }
+  return nil;
+}
+
 MD5 MD5WithString(NSString* string) {
   NSUInteger length = string.length;
   if (length) {
@@ -118,6 +133,11 @@ NSString* MD5HashedFormat(NSString* format, ...) {
   MD5 md5 = MD5WithString(string);
   [string release];
   va_end(arguments);
+  return MD5ToString(&md5);
+}
+
+NSString* MD5HashedData(NSData* data) {
+  MD5 md5 = MD5WithBytes([data bytes], [data length]);
   return MD5ToString(&md5);
 }
 
@@ -180,6 +200,11 @@ NSString* SHA2HashedFormat(NSString* format, ...) {
   SHA2 sha2 = SHA2WithString(string);
   [string release];
   va_end(arguments);
+  return SHA2ToString(&sha2);
+}
+
+NSString* SHA2HashedData(NSData* data) {
+  SHA2 sha2 = SHA2WithBytes([data bytes], [data length]);
   return SHA2ToString(&sha2);
 }
 

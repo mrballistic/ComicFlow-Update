@@ -29,9 +29,17 @@
 #import "Extensions_Foundation.h"
 #import "Logging.h"
 
-static OSSpinLock _calendarSpinLock = 0;
-static OSSpinLock _formattersSpinLock = 0;
-static OSSpinLock _staticSpinLock = 0;
+#if TARGET_OS_IPHONE
+
+#ifndef kCFCoreFoundationVersionNumber_iOS_5_1
+#define kCFCoreFoundationVersionNumber_iOS_5_1 690.1
+#endif
+
+#endif
+
+static OSSpinLock _calendarSpinLock = OS_SPINLOCK_INIT;
+static OSSpinLock _formattersSpinLock = OS_SPINLOCK_INIT;
+static OSSpinLock _staticSpinLock = OS_SPINLOCK_INIT;
 
 typedef enum {
   kCharacterSet_Newline = 0,
@@ -44,6 +52,49 @@ typedef enum {
   kCharacterSet_SentenceBoundariesAndNewlineCharacter,
   kNumCharacterSets
 } CharacterSet;
+
+NSURL* MakeHTTPURLWithArguments(NSString* baseURL, NSDictionary* arguments, BOOL escapeValues) {
+  NSUInteger index = 0;
+  for (NSString* key in arguments) {
+    NSString* value = [arguments objectForKey:key];
+    DCHECK([value isKindOfClass:[NSString class]]);
+    if (escapeValues) {
+      value = [value urlEscapedString];
+    }
+    baseURL = [baseURL stringByAppendingFormat:@"%c%@=%@", index++ == 0 ? '?' : '&', key, value];
+  }
+  return [NSURL URLWithString:baseURL];
+}
+
+// http://www.w3.org/TR/html401/interact/forms.html#h-17.13.4.2 - TODO: Use "multipart/mixed" in case of multiple file attachments
+NSData* MakeHTTPBodyForMultipartForm(NSString* boundary, NSDictionary* arguments) {
+  NSMutableData* body = [NSMutableData data];
+  for (NSString* key in arguments) {
+    [body appendData:[[NSString stringWithFormat:@"--%@\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    id value = [arguments objectForKey:key];
+    if ([value isKindOfClass:[NSDictionary class]]) {
+      NSString* disposition = [NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"; filename=\"%@\"\r\n",
+                               key, [value objectForKey:kMultipartFileKey_FileName]];  // TODO: Properly encode filename
+      [body appendData:[disposition dataUsingEncoding:NSUTF8StringEncoding]];
+      NSString* type = [NSString stringWithFormat:@"Content-Type: %@\r\n\r\n", [value objectForKey:kMultipartFileKey_MimeType]];
+      [body appendData:[type dataUsingEncoding:NSUTF8StringEncoding]];
+      [body appendData:[value objectForKey:kMultipartFileKey_FileData]];
+    } else if ([value isKindOfClass:[NSString class]]) {
+      NSString* disposition = [NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"\r\n\r\n", key];  // Content-Type defaults to "text/plain"
+      [body appendData:[disposition dataUsingEncoding:NSUTF8StringEncoding]];
+      [body appendData:[(NSString*)value dataUsingEncoding:NSUTF8StringEncoding]];
+    } else if ([value isKindOfClass:[NSData class]]) {
+      NSString* disposition = [NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"\r\n\r\n", key];  // Content-Type defaults to "text/plain"
+      [body appendData:[disposition dataUsingEncoding:NSUTF8StringEncoding]];
+      [body appendData:value];
+    } else {
+      NOT_REACHED();
+    }
+    [body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+  }
+  [body appendData:[[NSString stringWithFormat:@"--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+  return body;
+}
 
 static NSCharacterSet* _GetCachedCharacterSet(CharacterSet set) {
   static NSCharacterSet* cache[kNumCharacterSets] = {0};
@@ -730,10 +781,17 @@ static NSDateFormatter* _GetDateFormatter(NSString* format, NSString* identifier
 
 // https://developer.apple.com/library/ios/#qa/qa1719/_index.html
 - (void) setDoNotBackupAttributeAtPath:(NSString*)path {
-  u_int8_t value = 1;
-  int result = setxattr([path fileSystemRepresentation], "com.apple.MobileBackup", &value, sizeof(value), 0, 0);
-  if (result) {
-    LOG_ERROR(@"Failed setting do-not-backup attribute on \"%@\": %s (%i)", path, strerror(result), result);
+  if (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_5_1) {
+    NSError* error = nil;
+    if (![[NSURL fileURLWithPath:path] setResourceValue:[NSNumber numberWithBool:YES] forKey:NSURLIsExcludedFromBackupKey error:&error]) {
+      LOG_ERROR(@"Failed setting do-not-backup attribute on \"%@\": %@", path, error);
+    }
+  } else {
+    u_int8_t value = 1;
+    int result = setxattr([path fileSystemRepresentation], "com.apple.MobileBackup", &value, sizeof(value), 0, 0);
+    if (result) {
+      LOG_ERROR(@"Failed setting do-not-backup attribute on \"%@\": %s (%i)", path, strerror(result), result);
+    }
   }
 }
 
@@ -802,40 +860,10 @@ static NSDateFormatter* _GetDateFormatter(NSString* format, NSString* identifier
 
 @implementation NSMutableURLRequest (Extensions)
 
-// http://www.w3.org/TR/html401/interact/forms.html#h-17.13.4.2 - TODO: Use "multipart/mixed" in case of multiple file attachments
-+ (NSData*) HTTPBodyWithMultipartBoundary:(NSString*)boundary formArguments:(NSDictionary*)arguments {
-  NSMutableData* body = [NSMutableData data];
-  for (NSString* key in arguments) {
-    [body appendData:[[NSString stringWithFormat:@"--%@\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
-    id value = [arguments objectForKey:key];
-    if ([value isKindOfClass:[NSDictionary class]]) {
-      NSString* disposition = [NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"; filename=\"%@\"\r\n",
-                                                         key, [value objectForKey:kMultipartFileKey_FileName]];  // TODO: Properly encode filename
-      [body appendData:[disposition dataUsingEncoding:NSUTF8StringEncoding]];
-      NSString* type = [NSString stringWithFormat:@"Content-Type: %@\r\n\r\n", [value objectForKey:kMultipartFileKey_MimeType]];
-      [body appendData:[type dataUsingEncoding:NSUTF8StringEncoding]];
-      [body appendData:[value objectForKey:kMultipartFileKey_FileData]];
-    } else if ([value isKindOfClass:[NSString class]]) {
-      NSString* disposition = [NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"\r\n\r\n", key];  // Content-Type defaults to "text/plain"
-      [body appendData:[disposition dataUsingEncoding:NSUTF8StringEncoding]];
-      [body appendData:[(NSString*)value dataUsingEncoding:NSUTF8StringEncoding]];
-    } else if ([value isKindOfClass:[NSData class]]) {
-      NSString* disposition = [NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"\r\n\r\n", key];  // Content-Type defaults to "text/plain"
-      [body appendData:[disposition dataUsingEncoding:NSUTF8StringEncoding]];
-      [body appendData:value];
-    } else {
-      NOT_REACHED();
-    }
-    [body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
-  }
-  [body appendData:[[NSString stringWithFormat:@"--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
-  return body;
-}
-
 - (void) setHTTPBodyWithMultipartFormArguments:(NSDictionary*)arguments; {
   NSString* boundary = @"0xKhTmLbOuNdArY";
   [self setValue:[NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary] forHTTPHeaderField:@"Content-Type"];
-  [self setHTTPBody:[[self class] HTTPBodyWithMultipartBoundary:boundary formArguments:arguments]];
+  [self setHTTPBody:MakeHTTPBodyForMultipartForm(boundary, arguments)];
 }
 
 @end

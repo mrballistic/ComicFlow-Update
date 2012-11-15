@@ -734,6 +734,7 @@
 /* Begin XCBuildConfiguration section */
 		1D6058940D05DD3E006BFB54 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E22932A3121E260F00484F9F /* Debug.xcconfig */;
 			buildSettings = {
 				CURRENT_PROJECT_VERSION = 1.0.6;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
@@ -751,6 +752,7 @@
 		};
 		1D6058950D05DD3E006BFB54 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E22932A4121E260F00484F9F /* Release.xcconfig */;
 			buildSettings = {
 				CURRENT_PROJECT_VERSION = 1.0.6;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
@@ -771,7 +773,7 @@
 			baseConfigurationReference = E22932A3121E260F00484F9F /* Debug.xcconfig */;
 			buildSettings = {
 				"ARCHS[sdk=iphoneos*]" = "$(ARCHS_UNIVERSAL_IPHONE_OS)";
-				IPHONEOS_DEPLOYMENT_TARGET = 4.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 5.1;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 2;
 			};
@@ -782,7 +784,7 @@
 			baseConfigurationReference = E22932A4121E260F00484F9F /* Release.xcconfig */;
 			buildSettings = {
 				"ARCHS[sdk=iphoneos*]" = "$(ARCHS_UNIVERSAL_IPHONE_OS)";
-				IPHONEOS_DEPLOYMENT_TARGET = 4.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 5.1;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 2;
 			};
@@ -793,7 +795,7 @@
 			baseConfigurationReference = E25373D314F2C6A3009E3A74 /* Distribution.xcconfig */;
 			buildSettings = {
 				"ARCHS[sdk=iphoneos*]" = "$(ARCHS_UNIVERSAL_IPHONE_OS)";
-				IPHONEOS_DEPLOYMENT_TARGET = 4.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 5.1;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 2;
 			};
@@ -801,6 +803,7 @@
 		};
 		E25373CE14F2C68F009E3A74 /* Distribution */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E25373D314F2C6A3009E3A74 /* Distribution.xcconfig */;
 			buildSettings = {
 				CURRENT_PROJECT_VERSION = 1.0.6;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;

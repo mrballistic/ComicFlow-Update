@@ -24,8 +24,8 @@ typedef enum {
   kLogLevel_Abort,  // Always aborts
 } LogLevel;
 
-#define LOG_MESSAGE(__LEVEL__, ...) { if ((__LEVEL__) >= _minimumLogLevel) LogMessage(__LEVEL__, __VA_ARGS__); }
-#define LOG_EXCEPTION(__EXCEPTION__) { if ((kLogLevel_Exception) >= _minimumLogLevel) LogRawMessage(kLogLevel_Exception, [__EXCEPTION__ description]); }
+#define LOG_MESSAGE(__LEVEL__, ...) { if ((__LEVEL__) >= LoggingMinimumLogLevel) LogMessage(__LEVEL__, __VA_ARGS__); }
+#define LOG_EXCEPTION(__EXCEPTION__) { if ((kLogLevel_Exception) >= LoggingMinimumLogLevel) LogRawMessage(kLogLevel_Exception, [__EXCEPTION__ description]); }
 
 #ifdef NDEBUG
 #define LOG_DEBUG(...)
@@ -82,6 +82,9 @@ do { \
 
 typedef void (*LoggingLiveCallback)(NSTimeInterval timestamp, LogLevel level, NSString* message, void* context);
 typedef void (*LoggingReplayCallback)(NSUInteger appVersion, NSTimeInterval timestamp, LogLevel level, NSString* message, void* context);
+typedef NSString* (*LoggingRemoteConnectCallback)(void* context);  // Return initial message for client or nil to use default one
+typedef NSString* (*LoggingRemoteMessageCallback)(NSString* message, void* context);  // Return response message or nil (called from main thread)
+typedef void (*LoggingRemoteDisconnectCallback)(void* context);
 
 #ifdef __cplusplus
 extern "C" {
@@ -90,28 +93,34 @@ void LogMessage(LogLevel level, NSString* format, ...);
 void LogRawMessage(LogLevel level, NSString* message);
 
 const char* LoggingGetLevelName(LogLevel level);
-void LoggingSetMinimumLevel(LogLevel level);  // Default is kLogLevel_Debug unless overridden by "logLevel" environment variable
+void LoggingSetMinimumLevel(LogLevel level);
 LogLevel LoggingGetMinimumLevel();
+void LoggingResetMinimumLevel();  // Default is kLogLevel_Debug or kLogLevel_Verbose unless overridden by "logLevel" environment variable
 
 void LoggingSetCallback(LoggingLiveCallback callback, void* context);  // Callback must be thread-safe - Parameter "timestamp" is undefined
 LoggingLiveCallback LoggingGetCallback();
 
+void LoggingCaptureStdout();  // Captured as kLogLevel_Info
+BOOL LoggingIsStdoutCaptured();
+void LoggingCaptureStderr();  // Captured as kLogLevel_Error
+BOOL LoggingIsStderrCaptured();
+
 BOOL LoggingIsHistoryEnabled();
 BOOL LoggingEnableHistory(NSString* path, NSUInteger appVersion);  // Create if non-existing - Pass nil to close
 void LoggingPurgeHistory(NSTimeInterval maxAge);  // Pass 0.0 to clear entirely
-void LoggingReplayHistory(LoggingReplayCallback callback, void* context, BOOL backward);
+void LoggingReplayHistory(LoggingReplayCallback callback, void* context, BOOL backward, NSUInteger limit);
 #if NS_BLOCKS_AVAILABLE
-void LoggingEnumerateHistory(BOOL backward,
+void LoggingEnumerateHistory(BOOL backward, NSUInteger limit,
                              void (^block)(NSUInteger appVersion, NSTimeInterval timestamp, LogLevel level, NSString* message));
 #endif
 void LoggingDisableHistory();
 
 BOOL LoggingIsRemoteAccessEnabled();
-BOOL LoggingEnableRemoteAccess(NSUInteger port);
+BOOL LoggingEnableRemoteAccess(NSUInteger port, LoggingRemoteConnectCallback connectCallback, LoggingRemoteMessageCallback messageCallback, LoggingRemoteDisconnectCallback disconnectCallback, void* context);
 void LoggingDisableRemoteAccess(BOOL keepConnectionAlive);
-
-// For internal use only, do NOT use directly
-LogLevel _minimumLogLevel;
 #ifdef __cplusplus
 }
 #endif
+
+// For internal use only, do NOT use directly
+extern LogLevel LoggingMinimumLogLevel;

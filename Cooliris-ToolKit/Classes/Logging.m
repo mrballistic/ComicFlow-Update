@@ -19,44 +19,67 @@
 #import <ApplicationServices/ApplicationServices.h>
 #endif
 #import <libkern/OSAtomic.h>
+#import <sys/fcntl.h>
 #import <netinet/in.h>
 #import <sqlite3.h>
 #import <assert.h>
 #import <unistd.h>
+#import <pthread.h>
 #if !TARGET_OS_IPHONE
 #import <execinfo.h>
 #endif
 
 #import "Logging.h"
 
+#define kCaptureBufferSize 1024
+#define kReadBufferSize 1024
+
 @interface Logging : NSObject
 @end
 
-#ifdef NDEBUG
-LogLevel _minimumLogLevel = kLogLevel_Verbose;
-#else
-LogLevel _minimumLogLevel = kLogLevel_Debug;
-#endif
+LogLevel LoggingMinimumLogLevel = -1;
 
 static LoggingLiveCallback _loggingCallback = NULL;
 static void* _loggingContext = NULL;
 static const char* _levelNames[] = {"DEBUG", "VERBOSE", "INFO", "WARNING", "ERROR", "EXCEPTION", "ABORT"};  // Must match LogLevel
-static OSSpinLock _spinLock = 0;
+static OSSpinLock _spinLock = OS_SPINLOCK_INIT;
 static sqlite3* _database = NULL;
 static sqlite3_stmt* _statement = NULL;
 static CFSocketRef _socket = NULL;
-static CFWriteStreamRef _stream = NULL;
+static CFReadStreamRef _readStream = NULL;
+static CFWriteStreamRef _writeStream = NULL;
+static CFTimeInterval _startTime = 0.0;
+static LoggingRemoteConnectCallback _remoteConnectCallback = NULL;
+static LoggingRemoteMessageCallback _remoteMessageCallback = NULL;
+static LoggingRemoteDisconnectCallback _remoteDisconnectCallback = NULL;
+static void* _remoteContext = NULL;
+static int _outputFD = 0;
+static void* _stdoutCapture = NULL;
+static void* _stderrCapture = NULL;
 
 const char* LoggingGetLevelName(LogLevel level) {
   return _levelNames[level];
 }
 
 void LoggingSetMinimumLevel(LogLevel level) {
-  _minimumLogLevel = level;
+  LoggingMinimumLogLevel = level;
 }
 
 LogLevel LoggingGetMinimumLevel() {
-  return _minimumLogLevel;
+  return LoggingMinimumLogLevel;
+}
+
+void LoggingResetMinimumLevel() {
+  const char* level = getenv("logLevel");
+  if (level) {
+    LoggingSetMinimumLevel(atoi(level));
+  } else {
+#ifdef NDEBUG
+    LoggingMinimumLogLevel = kLogLevel_Verbose;
+#else
+    LoggingMinimumLogLevel = kLogLevel_Debug;
+#endif
+  }
 }
 
 void LoggingSetCallback(LoggingLiveCallback callback, void* context) {
@@ -66,6 +89,106 @@ void LoggingSetCallback(LoggingLiveCallback callback, void* context) {
 
 LoggingLiveCallback LoggingGetCallback() {
   return _loggingCallback;
+}
+
+static inline void _LogCapturedOutput(char* buffer, ssize_t size, LogLevel level) {
+  if (buffer[size - 1] == '\n') {
+    size -= 1;  // Strip ending newline if any
+  }
+  if (size > 0) {
+    NSAutoreleasePool* localPool = [[NSAutoreleasePool alloc] init];
+    NSString* message;
+    @try {
+      message = [[NSString alloc] initWithBytesNoCopy:buffer length:size encoding:NSUTF8StringEncoding freeWhenDone:NO];
+    }
+    @catch (NSException* exception) {
+      message = nil;
+    }
+    if (message) {
+      LogRawMessage(level, message);
+    }
+    [message release];
+    [localPool release];
+  }
+}
+
+static void* _CaptureThread(void* arg) {
+  void** params = (void**)arg;
+  int fd = (long)params[0];
+  LogLevel level = (LogLevel)params[1];
+  
+  char* buffer = malloc(kCaptureBufferSize);
+  assert(buffer);
+  
+  while (1) {
+    ssize_t size = read(fd, buffer, kCaptureBufferSize);
+    if (size > 0) {
+      _LogCapturedOutput(buffer, size, level);
+    }
+  }
+  
+  return NULL;
+}
+
+static void* _CaptureWriteFileDescriptor(int fd, LogLevel level) {
+  int fildes[2];
+  pipe(fildes);
+  dup2(fildes[1], fd);
+  close(fildes[1]);
+  fd = fildes[0];
+  assert(fd);
+  
+#if TARGET_OS_IPHONE
+  if (kCFCoreFoundationVersionNumber < kCFCoreFoundationVersionNumber_iOS_4_0)
+#else
+  if (kCFCoreFoundationVersionNumber < kCFCoreFoundationVersionNumber10_6)
+#endif
+  {
+    pthread_t pthread = NULL;
+    void** params = malloc(2 * sizeof(void*));
+    params[0] = (void*)(long)fd;
+    params[1] = (void*)level;
+    pthread_create(&pthread, NULL, _CaptureThread, params);
+    return pthread;
+  } else {
+    char* buffer = malloc(kCaptureBufferSize);
+    assert(buffer);
+    fcntl(fd, F_SETFL, O_NONBLOCK);
+    dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0);
+    dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, fd, 0, queue);
+    dispatch_source_set_event_handler(source, ^{
+      ssize_t size = read(fd, buffer, kCaptureBufferSize);
+      if (size > 0) {
+        _LogCapturedOutput(buffer, size, level);
+      }
+    });
+    dispatch_resume(source);
+    return source;
+  }
+}
+
+void LoggingCaptureStdout() {
+  if (_stdoutCapture == NULL) {
+    _outputFD = dup(STDOUT_FILENO);
+    assert(_outputFD > 0);
+    _stdoutCapture = _CaptureWriteFileDescriptor(STDOUT_FILENO, kLogLevel_Info);
+    assert(_stdoutCapture);
+  }
+}
+
+BOOL LoggingIsStdoutCaptured() {
+  return _stdoutCapture ? YES : NO;
+}
+
+void LoggingCaptureStderr() {
+  if (_stderrCapture == NULL) {
+    _stderrCapture = _CaptureWriteFileDescriptor(STDERR_FILENO, kLogLevel_Error);
+    assert(_stderrCapture);
+  }
+}
+
+BOOL LoggingIsStderrCaptured() {
+  return _stderrCapture ? YES : NO;
 }
 
 BOOL LoggingIsHistoryEnabled() {
@@ -106,7 +229,7 @@ BOOL LoggingEnableHistory(NSString* path, NSUInteger appVersion) {
     }
     if (result == SQLITE_OK) {
       NSString* statement = [NSString stringWithFormat:@"INSERT INTO history (version, timestamp, level, message) VALUES (%i, ?1, ?2, ?3)",
-                                                       appVersion];
+                                                       (int)appVersion];
       result = sqlite3_prepare_v2(_database, [statement UTF8String], -1, &_statement, NULL);
       assert(result == SQLITE_OK);
     }
@@ -139,11 +262,14 @@ void LoggingPurgeHistory(NSTimeInterval maxAge) {
   OSSpinLockUnlock(&_spinLock);
 }
 
-void LoggingReplayHistory(LoggingReplayCallback callback, void* context, BOOL backward) {
+void LoggingReplayHistory(LoggingReplayCallback callback, void* context, BOOL backward, NSUInteger limit) {
   OSSpinLockLock(&_spinLock);
   if (_database && callback) {
     NSString* string = [NSString stringWithFormat:@"SELECT version, timestamp, level, message FROM history ORDER BY timestamp %@",
                                                   backward ? @"DESC" : @"ASC"];
+    if (limit > 0) {
+      string = [string stringByAppendingFormat:@" LIMIT %i", (int)limit];
+    }
     sqlite3_stmt* statement = NULL;
     int result = sqlite3_prepare_v2(_database, [string UTF8String], -1, &statement, NULL);
     assert(result == SQLITE_OK);
@@ -178,9 +304,9 @@ static void _BlockReplayCallback(NSUInteger appVersion, NSTimeInterval timestamp
   callback(appVersion, timestamp, level, message);
 }
 
-void LoggingEnumerateHistory(BOOL backward,
+void LoggingEnumerateHistory(BOOL backward, NSUInteger limit,
                              void (^block)(NSUInteger appVersion, NSTimeInterval timestamp, LogLevel level, NSString* message)) {
-  LoggingReplayHistory(_BlockReplayCallback, block, backward);
+  LoggingReplayHistory(_BlockReplayCallback, block, backward, limit);
 }
 
 #endif
@@ -202,13 +328,30 @@ BOOL LoggingIsRemoteAccessEnabled() {
 }
 
 // Assumes spinlock is already taken
-static void _AppendStream(NSString* message) {
+static void _CloseStreams() {
+  if (_readStream) {
+    CFReadStreamClose(_readStream);
+    CFRelease(_readStream);
+    _readStream = NULL;
+  }
+  if (_writeStream) {
+    CFWriteStreamClose(_writeStream);
+    CFRelease(_writeStream);
+    _writeStream = NULL;
+  }
+  if (_remoteDisconnectCallback) {
+    (*_remoteDisconnectCallback)(_remoteContext);
+  }
+}
+
+// Assumes spinlock is already taken
+static void _WriteStream(NSString* message) {
   const char* cString = [message UTF8String];
   if (cString) {
     size_t length = strlen(cString);
     CFIndex count = length;
     while (count > 0) {
-      CFIndex result = CFWriteStreamWrite(_stream, (UInt8*)cString + length - count, count);
+      CFIndex result = CFWriteStreamWrite(_writeStream, (UInt8*)cString + length - count, count);
       if (result <= 0) {
         break;
       }
@@ -217,34 +360,113 @@ static void _AppendStream(NSString* message) {
   }
 }
 
+// Assume is called on main thread
+static void _ReadStream() {
+  DCHECK([NSThread isMainThread]);
+  unsigned char buffer[kReadBufferSize];
+  CFIndex count = CFReadStreamRead(_readStream, buffer, kReadBufferSize);
+  if (_remoteMessageCallback && (count > 2)) {
+    if (buffer[count - 1] == '\n') {
+      count -= 1;
+    }
+    if (buffer[count - 1] == '\r') {
+      count -= 1;
+    }
+    NSAutoreleasePool* localPool = [[NSAutoreleasePool alloc] init];
+    NSString* message = [[NSString alloc] initWithBytes:buffer length:count encoding:NSUTF8StringEncoding];
+    if (message) {
+      NSString* response = _remoteMessageCallback(message, _remoteContext);
+      if (response) {
+        OSSpinLockLock(&_spinLock);
+        _WriteStream([response stringByAppendingString:@"\n"]);
+        OSSpinLockUnlock(&_spinLock);
+      }
+      [message release];
+    } else {
+      OSSpinLockLock(&_spinLock);
+      _WriteStream(@"<SYNTAX ERROR>\n");
+      OSSpinLockUnlock(&_spinLock);
+    }
+    [localPool release];
+  }
+}
+
+static void _ReadStreamClientCallBack(CFReadStreamRef stream, CFStreamEventType type, void* clientCallBackInfo) {
+  switch (type) {
+    
+    case kCFStreamEventHasBytesAvailable:
+      _ReadStream();
+      break;
+    
+    case kCFStreamEventEndEncountered:
+      OSSpinLockLock(&_spinLock);
+      _CloseStreams();
+      OSSpinLockUnlock(&_spinLock);
+      break;
+    
+    default:
+      break;
+    
+  }
+}
+
+static void _OpenStreams(CFSocketNativeHandle handle) {
+  CFStreamCreatePairWithSocket(kCFAllocatorDefault, handle, &_readStream, &_writeStream);
+  if (_writeStream) {
+    CFWriteStreamSetProperty(_writeStream, kCFStreamPropertyShouldCloseNativeSocket, kCFBooleanTrue);
+    if (CFWriteStreamOpen(_writeStream)) {
+      NSAutoreleasePool* localPool = [[NSAutoreleasePool alloc] init];
+      
+      NSString* message = nil;
+      if (_remoteConnectCallback) {
+        message = (*_remoteConnectCallback)(_remoteContext);
+      }
+      if (message == nil) {
+        NSBundle* bundle = [NSBundle mainBundle];
+        if (bundle) {
+          message = [NSString stringWithFormat:@"**************************************************\n"
+                     "%@ %@ (%@)\n"
+                     "**************************************************\n\n",
+                     [bundle objectForInfoDictionaryKey:@"CFBundleName"],
+                     [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"],
+                     [bundle objectForInfoDictionaryKey:@"CFBundleVersion"]];
+        }
+      }
+      if (message) {
+        _WriteStream(message);
+      }
+      
+      [localPool release];
+    } else {
+      CFRelease(_writeStream);
+      _writeStream = NULL;
+      DNOT_REACHED();
+    }
+  } else {
+    DNOT_REACHED();
+  }
+  if (_readStream) {
+    CFReadStreamSetProperty(_readStream, kCFStreamPropertyShouldCloseNativeSocket, kCFBooleanTrue);
+    if (CFReadStreamOpen(_readStream)) {
+      CFStreamClientContext context = {0};
+      CFReadStreamSetClient(_readStream, kCFStreamEventHasBytesAvailable | kCFStreamEventErrorOccurred | kCFStreamEventEndEncountered, _ReadStreamClientCallBack, &context);
+      CFReadStreamScheduleWithRunLoop(_readStream, CFRunLoopGetMain(), kCFRunLoopCommonModes);
+    } else {
+      CFRelease(_readStream);
+      _readStream = NULL;
+      DNOT_REACHED();
+    }
+  } else {
+    DNOT_REACHED();
+  }
+}
+
 static void _AcceptCallBack(CFSocketRef socket, CFSocketCallBackType type, CFDataRef address, const void* data, void* info) {
   if (type == kCFSocketAcceptCallBack) {
     CFSocketNativeHandle handle = *(CFSocketNativeHandle*)data;
     OSSpinLockLock(&_spinLock);
-    if (_stream == NULL) {
-      CFStreamCreatePairWithSocket(kCFAllocatorDefault, handle, NULL, &_stream);
-      if (_stream) {
-        if (CFWriteStreamOpen(_stream)) {
-          CFWriteStreamSetProperty(_stream, kCFStreamPropertyShouldCloseNativeSocket, kCFBooleanTrue);
-          
-          NSBundle* bundle = [NSBundle mainBundle];
-          if (bundle) {
-            NSString* message = [[NSString alloc] initWithFormat:@"**************************************************\n"
-                                                                  "%@ %@ (%@)\n"
-                                                                  "**************************************************\n\n",
-                                                                 [bundle objectForInfoDictionaryKey:@"CFBundleName"],
-                                                                 [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"],
-                                                                 [bundle objectForInfoDictionaryKey:@"CFBundleVersion"]];
-            _AppendStream(message);
-            [message release];
-          }
-        } else {
-          CFRelease(_stream);
-          close(handle);
-        }
-      } else {
-        close(handle);
-      }
+    if (!_readStream && !_writeStream) {
+      _OpenStreams(handle);
     } else {
       close(handle);
     }
@@ -252,7 +474,7 @@ static void _AcceptCallBack(CFSocketRef socket, CFSocketCallBackType type, CFDat
   }
 }
 
-BOOL LoggingEnableRemoteAccess(NSUInteger port) {
+BOOL LoggingEnableRemoteAccess(NSUInteger port, LoggingRemoteConnectCallback connectCallback, LoggingRemoteMessageCallback messageCallback, LoggingRemoteDisconnectCallback disconnectCallback, void* context) {
   OSSpinLockLock(&_spinLock);
   if (_socket == NULL) {
     _socket = CFSocketCreate(kCFAllocatorDefault, PF_INET, SOCK_STREAM, IPPROTO_TCP, kCFSocketAcceptCallBack, _AcceptCallBack, NULL);
@@ -270,6 +492,11 @@ BOOL LoggingEnableRemoteAccess(NSUInteger port) {
         CFRunLoopSourceRef source = CFSocketCreateRunLoopSource(kCFAllocatorDefault, _socket, 0);
         CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
         CFRelease(source);
+        
+        _remoteConnectCallback = connectCallback;
+        _remoteMessageCallback = messageCallback;
+        _remoteDisconnectCallback = disconnectCallback;
+        _remoteContext = context;
       } else {
         CFRelease(_socket);
         _socket = NULL;
@@ -282,10 +509,8 @@ BOOL LoggingEnableRemoteAccess(NSUInteger port) {
 
 void LoggingDisableRemoteAccess(BOOL keepConnectionAlive) {
   OSSpinLockLock(&_spinLock);
-  if (!keepConnectionAlive && _stream) {
-    CFWriteStreamClose(_stream);
-    CFRelease(_stream);
-    _stream = NULL;
+  if (!keepConnectionAlive && (_readStream || _writeStream)) {
+    _CloseStreams();
   }
   if (_socket) {
     CFSocketInvalidate(_socket);
@@ -319,34 +544,33 @@ void LogRawMessage(LogLevel level, NSString* message) {
     }
   }
 #endif
-  double timestamp = CFAbsoluteTimeGetCurrent();
-  const char* cString = [message UTF8String];
-  printf("[%s] %s\n", _levelNames[level], cString);
+  CFTimeInterval timestamp = CFAbsoluteTimeGetCurrent();
+  CFTimeInterval relativeTime = timestamp - _startTime;
+  NSString* content = [[NSString alloc] initWithFormat:@"[%s | %.3f] %@\n", _levelNames[level], relativeTime, message];
+  NSData* data = [content dataUsingEncoding:NSUTF8StringEncoding allowLossyConversion:YES];
+  write(_outputFD, data.bytes, data.length);
   if (_loggingCallback) {
     (*_loggingCallback)(timestamp, level, message, _loggingContext);
   }
-  if (_database && (level > kLogLevel_Debug)) {
+  if (_database && (level >= kLogLevel_Info)) {  // Don't record debug or verbose levels
     OSSpinLockLock(&_spinLock);
     if (_database) {
-      _AppendHistory(timestamp, level, cString);
+      _AppendHistory(timestamp, level, [message UTF8String]);
     }
     OSSpinLockUnlock(&_spinLock);
   }
-  if (_stream) {
-    NSString* content = [[NSString alloc] initWithFormat:@"[%s] %@\n", _levelNames[level], message];
+  if (_writeStream) {
     OSSpinLockLock(&_spinLock);
-    if (_stream) {
-      if (CFWriteStreamGetStatus(_stream) == kCFStreamStatusOpen) {
-        _AppendStream(content);
+    if (_writeStream) {
+      if (CFWriteStreamGetStatus(_writeStream) == kCFStreamStatusOpen) {
+        _WriteStream(content);
       } else {
-        CFWriteStreamClose(_stream);
-        CFRelease(_stream);
-        _stream = NULL;
+        _CloseStreams();
       }
     }
     OSSpinLockUnlock(&_spinLock);
-    [content release];
   }
+  [content release];
   
   if (level >= kLogLevel_Abort) {
     LoggingDisableHistory();  // Ensure database is in a clean state
@@ -357,10 +581,11 @@ void LogRawMessage(LogLevel level, NSString* message) {
 @implementation Logging
 
 + (void) load {
-  const char* level = getenv("logLevel");
-  if (level) {
-    LoggingSetMinimumLevel(atoi(level));
-  }
+  LoggingResetMinimumLevel();
+  
+  _startTime = CFAbsoluteTimeGetCurrent();
+  
+  _outputFD = STDOUT_FILENO;
 }
 
 @end
