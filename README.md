@@ -1,3 +1,6 @@
+ComicFlow Update
+================
+
 Adding a few new features to the already awesome Comic Flow:
 
 * Preference-based password for WebDAV server (rather than the random number) - DONE!
