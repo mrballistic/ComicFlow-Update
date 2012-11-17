@@ -540,6 +540,8 @@ static void __DisplayQueueCallBack(void* info) {
   _currentComic = nil;
 }
 
+
+
 - (void) willRotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration {
   [super willRotateToInterfaceOrientation:toInterfaceOrientation duration:duration];
   

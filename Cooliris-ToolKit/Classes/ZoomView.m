@@ -80,8 +80,8 @@
     self.scrollsToTop = NO;
     self.autoresizesSubviews = NO;
     self.delegate = self;
-    
-    _displayMode = kZoomViewDisplayMode_Centered;
+      
+    _displayMode = kZoomViewDisplayMode_Fit;
     _doubleTapZoom = 1.5;
     
     _doubleTapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(_handleDoubleTap:)];
